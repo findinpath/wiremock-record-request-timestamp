@@ -2,7 +2,9 @@ package com.findinpath;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlMatching;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.greaterThan;
@@ -10,15 +12,7 @@ import static org.hamcrest.collection.IsCollectionWithSize.hasSize;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
-import com.github.tomakehurst.wiremock.http.Request;
-import com.github.tomakehurst.wiremock.http.RequestMethod;
-import java.time.Instant;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.function.Consumer;
+import java.util.Date;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,19 +30,10 @@ public class DemoTest {
 
   private WireMockServer wireMockServer;
 
-  private Map<RequestId, List<Instant>> requestTimestampsMap;
-
 
   @BeforeEach
   public void setup() {
-    requestTimestampsMap = new HashMap<>();
-    Consumer<Request> consumerRequest = request -> requestTimestampsMap.computeIfAbsent(
-        new RequestId(request.getUrl(), request.getMethod()),
-        requestId -> new LinkedList<>()
-    ).add(Instant.now());
-    var consumerRequestFilter = new ConsumerRequestFilter(consumerRequest);
     var configuration = new WireMockConfiguration()
-        .extensions(consumerRequestFilter)
         .port(WIREMOCK_PORT);
     wireMockServer = new WireMockServer(configuration);
     wireMockServer.start();
@@ -63,10 +48,8 @@ public class DemoTest {
 
   @Test
   public void requestTimestampsShouldBeRecorded() throws Exception {
-    var beginningOfTheTest = Instant.now();
+    var beginningOfTheTest = new Date();
     Thread.sleep(10);
-    // at the beginning of the test there shouldn't be any entry in the requestTimestampsMap
-    assertThat(requestTimestampsMap.entrySet(), hasSize(0));
 
     given()
         .when()
@@ -74,10 +57,10 @@ public class DemoTest {
         .then().
         assertThat().statusCode(200);
 
-    assertThat(requestTimestampsMap.entrySet(), hasSize(1));
-    var glossaryRequestTimestamps = getRecordedTimestamps(GLOSSARY_ENDPOINT, RequestMethod.GET);
-    assertThat(glossaryRequestTimestamps, hasSize(1));
-    assertThat(glossaryRequestTimestamps.get(0), greaterThan(beginningOfTheTest));
+    var loggedRequests  = wireMockServer.findAll(getRequestedFor(urlMatching(GLOSSARY_ENDPOINT)));
+
+    assertThat(loggedRequests, hasSize(1));
+    assertThat(loggedRequests.get(0).getLoggedDate(), greaterThan(beginningOfTheTest));
 
     Thread.sleep(10);
     given()
@@ -86,18 +69,17 @@ public class DemoTest {
         .then().
         assertThat().statusCode(200);
 
-    glossaryRequestTimestamps = getRecordedTimestamps(GLOSSARY_ENDPOINT, RequestMethod.GET);
-    assertThat(glossaryRequestTimestamps, hasSize(2));
-    assertThat(glossaryRequestTimestamps.get(0), greaterThan(beginningOfTheTest));
-    assertThat(glossaryRequestTimestamps.get(1), greaterThan(glossaryRequestTimestamps.get(0)));
+    loggedRequests  = wireMockServer.findAll(getRequestedFor(urlMatching(GLOSSARY_ENDPOINT)));
+    assertThat(loggedRequests, hasSize(2));
+    assertThat(loggedRequests.get(0).getLoggedDate(), greaterThan(beginningOfTheTest));
+    assertThat(loggedRequests.get(1).getLoggedDate(), greaterThan(loggedRequests.get(0).getLoggedDate()));
   }
 
 
   @Test
   public void requestTimestampsShouldBeRecordedAlsoForEndpointsWithoutStubs() throws Exception {
-    var beginningOfTheTest = Instant.now();
+    var beginningOfTheTest = new Date();
     Thread.sleep(10);
-    assertThat(requestTimestampsMap.entrySet(), hasSize(0));
 
     var unknownEndpoint = "/unknown";
     given()
@@ -106,10 +88,10 @@ public class DemoTest {
         .then().
         assertThat().statusCode(404);
 
-    assertThat(requestTimestampsMap.entrySet(), hasSize(1));
-    var glossaryRequestTimestamps = getRecordedTimestamps(unknownEndpoint, RequestMethod.GET);
-    assertThat(glossaryRequestTimestamps, hasSize(1));
-    assertThat(glossaryRequestTimestamps.get(0), greaterThan(beginningOfTheTest));
+    var loggedRequests  = wireMockServer.findAll(getRequestedFor(urlMatching(unknownEndpoint)));
+
+    assertThat(loggedRequests, hasSize(1));
+    assertThat(loggedRequests.get(0).getLoggedDate(), greaterThan(beginningOfTheTest));
   }
 
   private void setupStubs() {
@@ -119,8 +101,4 @@ public class DemoTest {
             .withBodyFile("glossary.json")));
   }
 
-  private List<Instant> getRecordedTimestamps(String url, RequestMethod requestMethod) {
-    return requestTimestampsMap.getOrDefault(new RequestId(url, requestMethod),
-        Collections.emptyList());
-  }
 }
